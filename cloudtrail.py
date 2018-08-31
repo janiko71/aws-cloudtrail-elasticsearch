@@ -9,6 +9,8 @@ import datetime
 from dateutil.tz import tzutc"""
 from elasticsearch import Elasticsearch
 from ssl import create_default_context
+from pathlib import Path
+import shutil
 
 import creds
 
@@ -17,7 +19,7 @@ import creds
 
     PUT logs/_settings
     {
-    "index.mapping.total_fields.limit": 3000
+    "index.mapping.total_fields.limit": 5000
     }
 """
 
@@ -29,6 +31,7 @@ import creds
 
 ENDPOINT_URL     = "https://search-logs-kyoetkhpjhod2xp44bgekae72y.eu-central-1.es.amazonaws.com"
 START_DATE_FILE  = "start_args.json"
+FILE_MODEL       = "model.start_args.json"
 
 
 """
@@ -290,6 +293,11 @@ nb_ev = 0
 t0 = time.time()
 
 # --- AWS Regions and start arguments
+
+path_file = Path(START_DATE_FILE)
+if (!path_file.exists()):
+    shutil.copyfile(FILE_MODEL, START_DATE_FILE)
+
 
 with open(START_DATE_FILE, encoding="UTF-8") as file:
     lg = file.read()
