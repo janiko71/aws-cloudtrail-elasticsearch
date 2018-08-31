@@ -329,8 +329,8 @@ for region in regions:
         load_cloudtrail_records(region, start_time, end_time)
     else:
         # at least partially loaded from start_time to end_time
-        load_cloudtrail_records(region, "", start_time)
-        load_cloudtrail_records(region, end_time, "")
+        load_cloudtrail_records(region, start_time, "")
+        load_cloudtrail_records(region, "", end_time)
 
     pass
 
