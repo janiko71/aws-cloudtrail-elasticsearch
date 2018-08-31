@@ -295,7 +295,7 @@ t0 = time.time()
 # --- AWS Regions and start arguments
 
 path_file = Path(START_DATE_FILE)
-if (!path_file.exists()):
+if (not path_file.exists()):
     shutil.copyfile(FILE_MODEL, START_DATE_FILE)
 
 
