@@ -78,17 +78,66 @@ def write_interval_dates(region, start_time, end_time):
     return
 
 
-def load_cloudtrail_records(region, start_time, end_time):
-    
-    """
-        pi = pg.paginate(EndTime="2018-06-13T00:00:00Z")
-        pi = pg.paginate(LookupAttributes=[{
-                'AttributeKey': 'EventId',
-                'AttributeValue': '5fdbe972-c1c4-465c-bddc-3c3e9e6ca2d2'
-            }])
-    """  
+def log_start_cloudtrail(aws_region, param):
 
-    global nb_created, nb_ev, nb_nop, regions, es
+    print("\nLooking for {} events in {}".format(param, aws_region))
+    logger.warning("="*128)
+    logger.warning("Looking for {} events in {}".format(param, aws_region))
+    logger.warning("="*128)
+
+
+def load_cloudtrail_newer_records(aws_region, start_time, end_time):
+
+    log_start_cloudtrail(aws_region, "newer")
+
+    new_start_time, new_end_time = load_cloudtrail_records(aws_region, start_time, "")
+    write_interval_dates(aws_region, new_start_time, end_time)
+
+    return
+
+
+def load_cloudtrail_older_records(aws_region, start_time, end_time):
+
+    log_start_cloudtrail(aws_region, "older")
+
+    new_start_time, new_end_time = load_cloudtrail_records(aws_region, "", end_time)
+    write_interval_dates(aws_region, start_time, new_end_time)
+
+    return
+
+
+def load_cloudtrail_all_records(aws_region):
+
+    log_start_cloudtrail(aws_region, "all")
+
+    new_start_time, new_end_time = load_cloudtrail_records(aws_region, "", "")
+    write_interval_dates(aws_region, new_start_time, new_end_time)
+
+    return
+
+
+def mapping_exception():
+
+    """
+            except Exception as e:
+
+            print(evid)
+            pprint.pprint(event)
+    
+            es.indices.refresh(index="logs")
+            write_interval_dates(aws_region, new_start_time, new_end_time)
+            print_counters()
+
+            logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
+
+            raise e
+    """
+    return
+
+
+def load_cloudtrail_records(region, search_type, start_time, end_time):
+
+    global nb_created, nb_ev, nb_nop, es
 
     # Some init 
     aws_region = region
@@ -97,33 +146,24 @@ def load_cloudtrail_records(region, start_time, end_time):
 
     # Connecting to AWS
     client = boto3.client('cloudtrail', aws_region)
-    print("\nLooking for events in " + aws_region)
-    logger.warning("="*128)
-    logger.warning("Looking for events in " + aws_region)
-    logger.warning("="*128)
 
-    # Call for ClourTrail events, with arguments
-    args = {}
-    if (start_time != ""):
-        args["StartTime"] = start_time
-    if (end_time != ""):
-        args["EndTime"] = end_time
-    """if (record_id != ""):
-        args["LookupAttributes"] = [{
-            'AttributeKey': 'EventId',
-            'AttributeValue': record_id
-        }]"""
+    try:
 
-    pg = client.get_paginator('lookup_events')
-    logger.debug("lookup_events arguments" + str(args))
-    if (len(args) > 0):
-        pi = pg.paginate(**args)
-    else:
-        pi = pg.paginate()
+        # Call for ClourTrail events, with arguments
+        args = {}
+        if (start_time != ""):
+            args["StartTime"] = start_time
+        if (end_time != ""):
+            args["EndTime"] = end_time
 
-    for page in pi:
+        pg = client.get_paginator('lookup_events')
+        logger.debug("lookup_events arguments" + str(args))
+        if (len(args) > 0):
+            pi = pg.paginate(**args)
+        else:
+            pi = pg.paginate()
 
-        try:
+        for page in pi:
 
             p = page.get('Events')
 
@@ -239,22 +279,15 @@ def load_cloudtrail_records(region, start_time, end_time):
                     nb_created +=1
                     es.index(index="logs", doc_type="cloudtrail", id=evid, body=event)
 
-        except Exception as e:
+    except Exception as e:
 
-            print(evid)
-            pprint.pprint(event)
-    
-            es.indices.refresh(index="logs")
-            write_interval_dates(aws_region, new_start_time, new_end_time)
-            print_counters()
+        print(evid)
+        pprint.pprint(event)
+        logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
+        logger.critical("Exception detail: " + str(e))
+        #write_interval_dates(aws_region, new_start_time, new_end_time)
 
-            logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
-
-            raise e
-
-    write_interval_dates(aws_region, new_start_time, new_end_time)
-
-    return
+    return new_start_time, new_end_time
 
 
 """
@@ -317,12 +350,14 @@ if ("restart" in arguments):
 
 context = create_default_context(cafile="certs.pem")
 # see https://certifiio.readthedocs.io/en/latest/ for details
-es = Elasticsearch(
+"""es = Elasticsearch(
     [ENDPOINT_URL],
     access_key = creds.key,
     secret_key = creds.sec,
     ssl_context=context
-)
+)"""
+es = Elasticsearch([ENDPOINT_URL], ssl_context=context)
+
 
 # --- CloudTrail loading
 
@@ -334,11 +369,11 @@ for region in regions:
     start_time = reg["StartTime"]
     end_time = reg["EndTime"]
     if (start_time == "") & (end_time == ""):
-        load_cloudtrail_records(region, start_time, end_time)
+        load_cloudtrail_all_records(region)
     else:
         # at least partially loaded from start_time to end_time
-        load_cloudtrail_records(region, start_time, "")
-        load_cloudtrail_records(region, "", end_time)
+        load_cloudtrail_older_records(region, start_time, end_time)
+        load_cloudtrail_newer_records(region, start_time, end_time)
 
     pass
 
