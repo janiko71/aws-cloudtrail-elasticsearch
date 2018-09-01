@@ -1,7 +1,7 @@
+start_args.json
 archives
 *.log
 creds*
 test*
 __py*
-start_args.json
 *.orig
