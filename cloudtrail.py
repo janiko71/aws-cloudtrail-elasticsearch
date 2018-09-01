@@ -64,54 +64,13 @@ def print_counters():
     return
 
 
-def write_interval_dates(region, start_time, end_time):
+def write_interval_dates():
 
-    reg = regions[region]
-    reg["StartTime"] = start_time
-    reg["EndTime"] = end_time
-
+    logger.debug("Writing down the status file with date/time...")
     logger.debug(regions)
     f = open(START_DATE_FILE, "w")
     f.write(json.dumps(regions))
     f.close()
-
-    return
-
-
-def log_start_cloudtrail(aws_region, param):
-
-    print("\nLooking for {} events in {}".format(param, aws_region))
-    logger.warning("="*128)
-    logger.warning("Looking for {} events in {}".format(param, aws_region))
-    logger.warning("="*128)
-
-
-def load_cloudtrail_newer_records(aws_region, start_time, end_time):
-
-    log_start_cloudtrail(aws_region, "newer")
-
-    new_start_time, new_end_time = load_cloudtrail_records(aws_region, start_time, "")
-    write_interval_dates(aws_region, new_start_time, end_time)
-
-    return
-
-
-def load_cloudtrail_older_records(aws_region, start_time, end_time):
-
-    log_start_cloudtrail(aws_region, "older")
-
-    new_start_time, new_end_time = load_cloudtrail_records(aws_region, "", end_time)
-    write_interval_dates(aws_region, start_time, new_end_time)
-
-    return
-
-
-def load_cloudtrail_all_records(aws_region):
-
-    log_start_cloudtrail(aws_region, "all")
-
-    new_start_time, new_end_time = load_cloudtrail_records(aws_region, "", "")
-    write_interval_dates(aws_region, new_start_time, new_end_time)
 
     return
 
@@ -135,33 +94,86 @@ def mapping_exception():
     return
 
 
-def load_cloudtrail_records(region, search_type, start_time, end_time):
+def calculate_new_dates(search_type, event_time, start_time, end_time):
+
+    """
+        Let's summarize:
+
+        - If we are looking for all events:
+            . The next start time will be the newest date of all records;
+            . The next end time will be the oldest date of all records.
+
+        - If we are looking for the oldest events:
+            . We don't change the next start time;
+            . The next end time will be the oldest date of all records.
+
+        - If we are looking for the newest:
+            . Next start time will be the newest of all records;
+            . Next end time is not modified.
+
+        I could have condensed the algo, at the expense of clarity.
+
+    """
+
+    if ("all" == search_type):
+
+        new_start_time = max(start_time, event_time)
+        new_end_time   = min(end_time, event_time)
+        if (new_end_time == ""):
+            new_end_time = event_time
+
+    elif ("newest" == search_type):
+
+        new_start_time = max(start_time, event_time)
+        new_end_time   = end_time
+
+    elif ("oldest" == search_type):
+
+        new_start_time = start_time
+        new_end_time   = min(end_time, event_time)
+
+    #print("{}  evit {}   Start {}->{}    End {}->{}".format(search_type, event_time, start_time, new_start_time, end_time, new_end_time))
+
+    return new_start_time, new_end_time
+
+
+
+def load_cloudtrail_records(current_region, search_type, start_time = "", end_time = ""):
+
+    logger.warning("="*128)
+    logger.warning("Looking for {} events in {}".format(search_type, current_region))
+    logger.warning("="*128)
+    logger.debug("load_cloudtrail_records with ({},{},{},{})".format(current_region, search_type, start_time, end_time))
+    print("Looking for {} events in {}".format(search_type, current_region))
 
     global nb_created, nb_ev, nb_nop, es
 
-    # Some init 
-    aws_region = region
-    new_start_time = ""
-    new_end_time = ""
-
     # Connecting to AWS
-    client = boto3.client('cloudtrail', aws_region)
+    client = boto3.client('cloudtrail', current_region)
 
     try:
 
         # Call for ClourTrail events, with arguments
-        args = {}
-        if (start_time != ""):
-            args["StartTime"] = start_time
-        if (end_time != ""):
+        args = { 'MaxResults': 50 }
+
+        if ("all" == search_type):
+
+            # No time arg in this case: we search all events
+            pass
+
+        elif ("oldest" == search_type):
+
+            # Looking for events older that end_time
             args["EndTime"] = end_time
 
+        elif ("newest" == search_type):
+
+            # Looking for the newest only
+            args["StartTime"] = start_time
+
         pg = client.get_paginator('lookup_events')
-        logger.debug("lookup_events arguments" + str(args))
-        if (len(args) > 0):
-            pi = pg.paginate(**args)
-        else:
-            pi = pg.paginate()
+        logger.debug("lookup_events arguments for {} with args {}".format(current_region, str(args)))
+        pi = pg.paginate(**args)
 
         for page in pi:
 
@@ -174,7 +186,7 @@ def load_cloudtrail_records(region, search_type, start_time, end_time):
                     sys.stdout.write(str(nb_ev) + "...")
                     sys.stdout.flush()
 
-                # Creation of one record with basic information
+                # Record creation with basic information
 
                 evid = ev['EventId']
                 event = {}
@@ -183,14 +195,7 @@ def load_cloudtrail_records(region, search_type, start_time, end_time):
                 event["EventTime"] = ev["EventTime"]
                 event_time = ev["EventTime"].__str__()
 
-                if (new_start_time == ""):
-                    new_start_time = event_time
-
-                if (new_end_time == ""):
-                    new_end_time = event_time
-
-                if (event_time < new_end_time):
-                    new_end_time = event_time
+                start_time, end_time = calculate_new_dates(search_type, event_time, start_time, end_time)
 
                 if ('EventSource' in event):
                     event["EventSource"] = ev["EventSource"]
@@ -279,15 +284,42 @@ def load_cloudtrail_records(region, search_type, start_time, end_time):
                     nb_created +=1
                     es.index(index="logs", doc_type="cloudtrail", id=evid, body=event)
 
+        # Here everything is fine, we read all records without any mapping error
+        reg = regions[current_region]
+
+        if ("oldest" == search_type):
+
+            # We read all the old events, so we can update the "EndTime"
+            reg["EndTime"] = end_time
+
+        elif ("newest" == search_type):
+
+            # We read all the newest events, so let's set the new "StartTime"
+            reg["StartTime"] = start_time
+
+
+
     except Exception as e:
 
+        print("!!! Exception !!!")
         print(evid)
         pprint.pprint(event)
         logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
         logger.critical("Exception detail: " + str(e))
-        #write_interval_dates(aws_region, new_start_time, new_end_time)
 
-    return new_start_time, new_end_time
+    finally:
+
+        reg = regions[region]
+
+        if ("all" == search_type):
+            reg["StartTime"] = start_time
+            reg["EndTime"] = end_time
+
+        logger.debug("Normal ou abnormal end, final start_time={}, final end_time={}".format(start_time, end_time))
+        write_interval_dates()
+        print()
+
+    return 
 
 
 """
@@ -343,7 +375,9 @@ if ("restart" in arguments):
     for region in regions:
         reg = regions[region]
         reg["StartTime"] = "" 
-        write_interval_dates(region, "", "")
+        reg["EndTime"] = ""
+
+    write_interval_dates()
 
 
 # --- Connecting Elasticsearch
@@ -356,7 +390,8 @@ context = create_default_context(cafile="certs.pem")
     secret_key = creds.sec,
     ssl_context=context
 )"""
-es = Elasticsearch([ENDPOINT_URL], ssl_context=context)
+#es = Elasticsearch([ENDPOINT_URL], ssl_context=context)
+es = Elasticsearch()
 
 
 # --- CloudTrail loading
@@ -369,11 +404,11 @@ for region in regions:
     start_time = reg["StartTime"]
     end_time = reg["EndTime"]
     if (start_time == "") & (end_time == ""):
-        load_cloudtrail_all_records(region)
+        load_cloudtrail_records(region, "all")
     else:
         # at least partially loaded from start_time to end_time
-        load_cloudtrail_older_records(region, start_time, end_time)
-        load_cloudtrail_newer_records(region, start_time, end_time)
+        load_cloudtrail_records(region, "oldest", start_time, end_time)
+        load_cloudtrail_records(region, "newest", start_time, end_time)
 
     pass
 
@@ -383,5 +418,5 @@ for region in regions:
 print_counters()
 
 exec_time = time.time() - t0
-print("End of loading CloudTrail events, execution time {:2f}".format(exec_time))
-logger.warning("End of loading CloudTrail events, execution time {:2f}".format(exec_time))
+print("End of CloudTrail events loading, execution time {:2f}".format(exec_time))
+logger.warning("End of CloudTrail events loading, execution time {:2f}".format(exec_time))
