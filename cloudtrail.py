@@ -233,7 +233,8 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
     # Connecting to AWS
 
-    client = boto3.client('cloudtrail', current_region)
+    session = boto3.session.Session(aws_access_key_id=creds.access_key, aws_secret_access_key=creds.secret_key, region_name=current_region)
+    client  = session.client("cloudtrail")
 
     # Because of some inconsistencies in CloudTrail events, the ElasticSearch mapping may fails sometimes.
     # So we try/catch the load & map code, and stop when a exception arise.
