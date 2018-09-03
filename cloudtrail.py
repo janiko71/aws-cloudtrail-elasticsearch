@@ -324,7 +324,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
                             logger.debug(LOG_FORMAT.format(evid, 'iamInstanceProfile', str(r_params['iamInstanceProfile'])))
                             if (isinstance(r_params['iamInstanceProfile'], str)):
-                                logger.warning(LOG_FORMAT.format(evid, 'iamInstanceProfile', r_params['iamInstanceProfile']))
+                                logger.info(LOG_FORMAT.format(evid, 'iamInstanceProfile', r_params['iamInstanceProfile']))
                                 r_params['iamInstanceProfile'] = {"name": r_params['iamInstanceProfile']}
 
                         if("policy" in r_params):
@@ -332,7 +332,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                             # Very hard to debug
                             logger.debug(LOG_FORMAT.format(evid, 'policy', str(r_params['policy'])))
                             if ("Statement" not in r_params['policy']):
-                                logger.warning(LOG_FORMAT.format(evid, "Statement.policy modified to Policy.{}".format(svc), r_params['policy']))
+                                logger.info(LOG_FORMAT.format(evid, "Statement.policy modified to Policy.{}".format(svc), r_params['policy']))
                                 ind = "policy." + svc
                                 r_params[ind] = r_params['policy']
                                 del r_params['policy']
@@ -347,7 +347,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                         if("role" in r_elems):
                             logger.debug(LOG_FORMAT.format(evid, "role", str(r_elems["role"])))
                             if (isinstance(r_elems["role"], str)):
-                                #logger.warning(evid, "role", str(r_elems["role"])
+                                logger.info(evid, "role", str(r_elems["role"])
                                 arn = r_elems["role"]
                                 del r_elems['role']
                                 r_elems['roleArn'] = arn
@@ -355,11 +355,13 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                         if ("endpoint" in r_elems):
                             logger.debug(LOG_FORMAT.format(evid, 'endpoint', str(r_elems['endpoint'])))
                             if (isinstance(r_elems['endpoint'], str)):
+                                logger.info(LOG_FORMAT.format(evid, 'endpoint', str(r_elems['endpoint'])))
                                 r_elems['endpoint'] = {'address': r_elems['endpoint']}
 
                         if ("dBSubnetGroup" in r_elems):
                             logger.debug(LOG_FORMAT.format(evid, "dBSubnetGroup", str(r_elems['dBSubnetGroup'])))
                             if (isinstance(r_elems['dBSubnetGroup'], str)):
+                                logger.info(LOG_FORMAT.format(evid, "dBSubnetGroup", str(r_elems['dBSubnetGroup'])))
                                 r_elems['dBSubnetGroup'] = {'dBSubnetGroupName': r_elems['dBSubnetGroup']}
 
                 # Some other exceptions
@@ -375,7 +377,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                 if ("additionalEventData" in cloud_trail_event):
 
                     content = cloud_trail_event['additionalEventData']
-                    logger.debug(LOG_FORMAT.format(evid, 'additionalEventData', content))
+                    logger.info(LOG_FORMAT.format(evid, 'additionalEventData', content))
                     ind = "additionalEventData." + svc
                     cloud_trail_event[ind] = content
                     del cloud_trail_event['additionalEventData'] 
@@ -470,6 +472,9 @@ logger.setLevel(logging.WARNING)  # default value
 
 if ("debug" in arguments):
     logger.setLevel(logging.DEBUG)
+elif ("info" in arguments):
+    logger.setLevel(logging.INFO)
+
 
 # --- Global counters 
 
