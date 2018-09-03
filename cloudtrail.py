@@ -12,6 +12,13 @@
     phase, no duplicates are written in the ElasticSearch index).
 
     And remember that this script will also generate CloudTrail events...
+    
+    Pre-requisites:
+
+        - Install boto3 and elasticsearch (via pip3)
+        - Install aws4auth (with "pip3 install requests-aws4auth")
+
+    aws4auth is required only if you use an AWS Elasticsearch instance.         
 
     TO DO : 
 
@@ -32,13 +39,13 @@ import logging
 import time
 import datetime
 
-from elasticsearch import Elasticsearch
-from ssl import create_default_context
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 
 from pathlib import Path
 import shutil
 
-# import creds
+import creds
 
 """
     To access AWS with AK/SK, I suggest to create a creds.py file containing the keys, looking like:
@@ -46,8 +53,9 @@ import shutil
         global key
         global sec
 
-        key = "access_key"
-        sec = "secret_key"
+        access_key = "access_key"
+        secret_key = "secret_key"
+        url        = "url of the Elasticsearch endpoint"
 
     Note: the user must have all needed IAM rights (CloudTrail/lookup and ES/writing index)
 """ 
@@ -57,6 +65,8 @@ import shutil
     In a Kibana dev tool console, type (for example):
 
         PUT index_name
+
+    And then:
 
         PUT index_name/_settings
         {
@@ -71,10 +81,10 @@ import shutil
     -------------------------------
 """
 
-ENDPOINT_URL     = "https://search-logs-fy3ihcc5rkvwujbhlrxz7amody.eu-west-3.es.amazonaws.com/"
+ENDPOINT_URL     = creds.url
 START_DATE_FILE  = "start_args.json"
 FILE_MODEL       = "model.start_args.json"
-INDEX_NAME       = "ct"
+INDEX_NAME       = "logs"
 DOC_TYPE         = "cloudtrail"
 
 
@@ -492,18 +502,22 @@ if ("restart" in arguments):
     write_interval_dates()
 
 
-# --- Connecting Elasticsearch; we assume a local instance, but modify to fit your IT.
+# --- Connecting Elasticsearch; we assume it's an AWS instance, but modify to fit your IT.
 
-context = create_default_context(cafile="certs.pem")
-# see https://certifiio.readthedocs.io/en/latest/ for details
-"""es = Elasticsearch(
+# see https://certifiio.readthedocs.io/en/latest/ 
+# and https://elasticsearch-py.readthedocs.io/en/master/ for details
+
+# Using Signature Version 4 Signing Process (https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
+awsauth = AWS4Auth(creds.access_key, creds.secret_key, "eu-central-1", 'es')
+
+#context = create_default_context(cafile="certs.pem")
+es = Elasticsearch(
     [ENDPOINT_URL],
-    access_key = creds.key,
-    secret_key = creds.sec,
-    ssl_context=context
-)"""
-#es = Elasticsearch([ENDPOINT_URL], ssl_context=context)
-es = Elasticsearch()
+    http_auth=awsauth,
+    use_ssl=True,
+    verify_certs=True,
+    connection_class=RequestsHttpConnection
+)
 
 
 # --- CloudTrail loading
