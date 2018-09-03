@@ -13,6 +13,15 @@
 
     And remember that this script will also generate CloudTrail events...
 
+    TO DO : 
+
+        - Handle "InvalidSignatureException"
+
+        - Mapping errors:
+
+            . CreateQueue sqs.amazonaws.com --> requestParameters.attribute
+            . DescribeEvents health.amazonaws.com --> requestParameters.filter
+            . SetDataRetrievalPolicy glacier.amazonaws.com --> PolicyUnkownType!!
 """    
 
 import boto3
@@ -47,9 +56,9 @@ import shutil
     In ElasticSearch, create an index and increase the total of fields that can be used in the mapping. 
     In a Kibana dev tool console, type (for example):
 
-        PUT logs
+        PUT index_name
 
-        PUT logs/_settings
+        PUT index_name/_settings
         {
         "index.mapping.total_fields.limit": 5000
         }
@@ -62,9 +71,11 @@ import shutil
     -------------------------------
 """
 
-ENDPOINT_URL     = "https://search-logs-kyoetkhpjhod2xp44bgekae72y.eu-central-1.es.amazonaws.com"
+ENDPOINT_URL     = "https://search-logs-fy3ihcc5rkvwujbhlrxz7amody.eu-west-3.es.amazonaws.com/"
 START_DATE_FILE  = "start_args.json"
 FILE_MODEL       = "model.start_args.json"
+INDEX_NAME       = "ct"
+DOC_TYPE         = "cloudtrail"
 
 
 """
@@ -129,7 +140,7 @@ def mapping_exception():
             print(evid)
             pprint.pprint(event)
     
-            es.indices.refresh(index="logs")
+            es.indices.refresh(index=INDEX_NAME)
             write_interval_dates(aws_region, new_start_time, new_end_time)
             print_counters()
 
@@ -269,16 +280,20 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                 event["EventTime"] = ev["EventTime"]
                 event_time = ev["EventTime"].__str__()
 
+                if ('Username' in ev):
+                    event['Username'] = ev["Username"]
+                if ('Resources' in ev):
+                    event['Resources'] = ev["Resources"]
+
                 # Sensitive: the new interval dates (times)
 
                 start_time, end_time = calculate_new_dates(search_type, event_time, start_time, end_time)
 
-                if ('EventSource' in event):
+                # Try to guess the AWS service name
+                svc = "unknown"
+                if ('EventSource' in ev):
                     event["EventSource"] = ev["EventSource"]
-                if ('Username' in event):
-                    event['Username'] = ev["Username"]
-                if ('Resources' in event):
-                    event['Resources'] = ev["Resources"]
+                    svc = event["EventSource"].split(".")[0]
 
                 # Now it's more tricky : we parse CloudTrailEvent, which has
                 # some exception (due to lack on consistency in some records,
@@ -306,8 +321,9 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                             # Very hard to debug
                             logger.debug(LOG_FORMAT.format(evid, 'policy', str(r_params['policy'])))
                             if ("Statement" not in r_params['policy']):
-                                logger.warning(LOG_FORMAT.format(evid, "Statement.policy modified to unknownPolicy", r_params['policy']))
-                                r_params['unknownPolicy'] = r_params['policy']
+                                logger.warning(LOG_FORMAT.format(evid, "Statement.policy modified to Policy.{}".format(svc), r_params['policy']))
+                                ind = "policy." + svc
+                                r_params[ind] = r_params['policy']
                                 del r_params['policy']
 
                 # Parsing the exceptions found into 'responseElement'
@@ -341,13 +357,17 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
                     content = cloud_trail_event['apiVersion']
                     logger.debug(LOG_FORMAT.format(evid, 'apiVersion', content))
-                    cloud_trail_event['apiVersion'] = "redacted " + str(content)
+                    ind = "apiVersion." + svc
+                    cloud_trail_event[ind] = content
+                    del cloud_trail_event['apiVersion']
 
                 if ("additionalEventData" in cloud_trail_event):
 
                     content = cloud_trail_event['additionalEventData']
                     logger.debug(LOG_FORMAT.format(evid, 'additionalEventData', content))
-                    cloud_trail_event['additionalEventData'] = "redacted " + str(content)
+                    ind = "additionalEventData." + svc
+                    cloud_trail_event[ind] = content
+                    del cloud_trail_event['additionalEventData'] 
 
                 # Let's rock: we parse all the JSON fields
                 for det,val in cloud_trail_event.items():
@@ -356,11 +376,11 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                     
                 # Now we have an updated event, we can put it in elasticsearch
                 # Let's suppose we won't need to update them for they should be sealed in stone!
-                if (es.exists(index="logs", doc_type="cloudtrail", id=evid)):
+                if (es.exists(index=INDEX_NAME, doc_type=DOC_TYPE, id=evid)):
                     nb_nop += 1
                 else:                
                     nb_created +=1
-                    es.index(index="logs", doc_type="cloudtrail", id=evid, body=event)
+                    es.index(index=INDEX_NAME, doc_type=DOC_TYPE, id=evid, body=event)
 
         # Here everything is fine, we read all records without any mapping error
         reg = regions[current_region]
@@ -384,6 +404,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
         pprint.pprint(event)
         logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
         logger.critical("Exception detail: " + str(e))
+        logger.critical(str(event))
 
     finally:
 
