@@ -347,7 +347,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                         if("role" in r_elems):
                             logger.debug(LOG_FORMAT.format(evid, "role", str(r_elems["role"])))
                             if (isinstance(r_elems["role"], str)):
-                                logger.info(evid, "role", str(r_elems["role"])
+                                logger.info(evid, "role", str(r_elems["role"]))
                                 arn = r_elems["role"]
                                 del r_elems['role']
                                 r_elems['roleArn'] = arn
