@@ -397,7 +397,7 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                 #
 
                 # It may happens sometimes that the trail event is empty!
-                
+
                 if (cloud_trail_event != None):
 
                     for det,val in cloud_trail_event.items():
@@ -424,7 +424,6 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
             # We read all the newest events, so let's set the new "StartTime"
             reg["StartTime"] = start_time
-
 
 
     except Exception as e:
