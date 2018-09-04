@@ -3,15 +3,6 @@
     This program loads all CloudTrail events (for an AWS account), and put them into an ElasticSearch index.
 
     Due to some inconsistencies into the mapping of some events, a few exceptions had to be handled by coding.
-    This has been reported to AWS, but changing mapping is very dangerous because operational client scripts 
-    may fail. So we have to do with that.
-
-    This script can load all the events for all the regions, but it can handle restarts (in some cases). You
-    can stop and restart the script if it is too long, but due to some restrictions in the order we retrieve
-    the events, the script may sometimes restart fetching already loaded events (only during the lookup
-    phase, no duplicates are written in the ElasticSearch index).
-
-    And remember that this script will also generate CloudTrail events...
     
     Pre-requisites:
 
@@ -20,15 +11,6 @@
 
     aws4auth is required only if you use an AWS Elasticsearch instance.         
 
-    TO DO : 
-
-        - Handle "InvalidSignatureException"
-
-        - Mapping errors:
-
-            . CreateQueue sqs.amazonaws.com --> requestParameters.attribute
-            . DescribeEvents health.amazonaws.com --> requestParameters.filter
-            . SetDataRetrievalPolicy glacier.amazonaws.com --> PolicyUnkownType!!
 """    
 
 import boto3
@@ -48,16 +30,8 @@ import shutil
 import creds
 
 """
-    To access AWS with AK/SK, I suggest to create a creds.py file containing the keys, looking like:
+    To access AWS with AK/SK, I suggest to create a creds.py file containing the keys, see README.md.
 
-        global key
-        global sec
-
-        access_key = "access_key"
-        secret_key = "secret_key"
-        url        = "url of the Elasticsearch endpoint"
-
-    Note: the user must have all needed IAM rights (CloudTrail/lookup and ES/writing index)
 """ 
 
 """
@@ -142,25 +116,6 @@ def write_interval_dates():
     return
 
 
-def mapping_exception():
-
-    """
-            except Exception as e:
-
-            print(evid)
-            pprint.pprint(event)
-    
-            es.indices.refresh(index=INDEX_NAME)
-            write_interval_dates(aws_region, new_start_time, new_end_time)
-            print_counters()
-
-            logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
-
-            raise e
-    """
-    return
-
-
 def calculate_new_dates(search_type, event_time, start_time, end_time):
 
     """
@@ -198,8 +153,6 @@ def calculate_new_dates(search_type, event_time, start_time, end_time):
 
         new_start_time = start_time
         new_end_time   = min(end_time, event_time)
-
-    #print("{}  evit {}   Start {}->{}    End {}->{}".format(search_type, event_time, start_time, new_start_time, end_time, new_end_time))
 
     return new_start_time, new_end_time
 
@@ -260,7 +213,9 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
             # Looking for the newest only
             args["StartTime"] = start_time
 
-        # Pagination, to handle large volumes of events
+        #
+		# --- Pagination, to handle large volumes of events
+		#
 
         pg = client.get_paginator('lookup_events')
         logger.debug("lookup_events arguments for {} with args {}".format(current_region, str(args)))
@@ -270,10 +225,9 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
             p = page.get('Events')
 
-            # For all events "ev" in the pagination response, we look for the records
+            # For all events "ev" in the pagination response, we take a look into the content
 
             for ev in p:
-
 
                 # Some displays
                 
@@ -282,14 +236,19 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
                     sys.stdout.write(str(nb_ev) + "...")
                     sys.stdout.flush()
 
-                # Record creation with basic information
+                #
+                # --- Record creation with basic information
+                #
 
-                evid = ev['EventId']
                 event = {}
-                event["EventId"] = ev["EventId"]
-                event["EventName"] = ev["EventName"]
+                ev_id = ev['EventId']
+                ev_name = ev["EventName"]
+                event["EventId"] = ev_id
+                event["EventName"] = ev_name
                 event["EventTime"] = ev["EventTime"]
                 event_time = ev["EventTime"].__str__()
+
+                # These fields are not always present
 
                 if ('Username' in ev):
                     event['Username'] = ev["Username"]
@@ -300,16 +259,22 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
                 start_time, end_time = calculate_new_dates(search_type, event_time, start_time, end_time)
 
-                # Try to guess the AWS service name
+                # Try to guess the AWS service name. EventSource looks like "svc.amazonaws.com"
+
                 svc = "unknown"
+
                 if ('EventSource' in ev):
                     event["EventSource"] = ev["EventSource"]
                     svc = event["EventSource"].split(".")[0]
 
+                # 
+                # --- Parsing CloudTrailEvent
+                #
+
                 # Now it's more tricky : we parse CloudTrailEvent, which has
                 # some exception (due to lack on consistency in some records,
                 # that has been reported to AWS)
-
+                
                 ct_event = json.loads(ev['CloudTrailEvent'])
                 cloud_trail_event = json.loads(json_datetime_converter(ct_event))
 
@@ -322,78 +287,130 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
 
                         if("iamInstanceProfile" in r_params):
 
-                            logger.debug(LOG_FORMAT.format(evid, 'iamInstanceProfile', str(r_params['iamInstanceProfile'])))
+                            # Not sure for this one, to be verified
+                            logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, 'requestParameters.iamInstanceProfile', str(r_params['iamInstanceProfile']), ev))
                             if (isinstance(r_params['iamInstanceProfile'], str)):
-                                logger.info(LOG_FORMAT.format(evid, 'iamInstanceProfile', r_params['iamInstanceProfile']))
+                                logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, 'RequestParameters.iamInstanceProfile', str(r_params['iamInstanceProfile']), ev))
                                 r_params['iamInstanceProfile'] = {"name": r_params['iamInstanceProfile']}
+
 
                         if("policy" in r_params):
 
                             # Very hard to debug
-                            logger.debug(LOG_FORMAT.format(evid, 'policy', str(r_params['policy'])))
-                            if ("Statement" not in r_params['policy']):
-                                logger.info(LOG_FORMAT.format(evid, "Statement.policy modified to Policy.{}".format(svc), r_params['policy']))
-                                ind = "policy." + svc
+                            logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, 'RequestParameters.policy', str(r_params['policy']), ev))
+                            logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "RequestParameters.policy modified to policy_{}".format(svc), str(r_params['policy']), ev))
+                            ind = "policy_" + svc
+                            # S3 strange policy
+                            if (r_params['policy'] == ['']):
+                                r_params[ind] = ""
+                            else:
                                 r_params[ind] = r_params['policy']
-                                del r_params['policy']
+                            del r_params['policy']
+
+
+                        if ("filter" in r_params):
+                            logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "RequestParameters.filter modified to filter_{}".format(svc), str(r_params['filter']), ev))
+                            r_params["filter_" + svc] = r_params["filter"]
+                            del r_params["filter"]
+
+
+                        if ("attribute" in r_params):
+                            logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "RequestParameters.attribute modified to attribute_{}".format(svc), str(r_params['attribute']), ev))
+                            r_params["attribute_" + svc] = r_params["attribute"]
+                            del r_params["attribute"]
+
+
+                        if ("domainName" in r_params):
+                            logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "RequestParameters.domainName modified to domainName_{}".format(svc), str(r_params['domainName']), ev))
+                            r_params["domainName_" + svc] = r_params["domainName"]
+                            del r_params["domainName"]
+
+
+                        if ("rule" in r_params):
+                            logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "RequestParameters.rule modified to rule_{}".format(svc), str(r_params['rule']), ev))
+                            r_params["rule_" + svc] = r_params["rule"]
+                            del r_params["rule"]
+
+
 
                 # Parsing the exceptions found into 'responseElement'
 
                 if ("responseElements" in cloud_trail_event):
 
                     r_elems = cloud_trail_event["responseElements"]
+
                     if r_elems != None:
+                        
+                        if (isinstance(r_elems, str)):
 
-                        if("role" in r_elems):
-                            logger.debug(LOG_FORMAT.format(evid, "role", str(r_elems["role"])))
-                            if (isinstance(r_elems["role"], str)):
-                                logger.info(evid, "role", str(r_elems["role"]))
-                                arn = r_elems["role"]
-                                del r_elems['role']
-                                r_elems['roleArn'] = arn
+                            # Not sure, to be verified
+                            logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, "responseElements", r_elems, ev))
+                            cloud_trail_event["responseElements_" + svc] = r_elems
+                            del cloud_trail_event["responseElements"]
 
-                        if ("endpoint" in r_elems):
-                            logger.debug(LOG_FORMAT.format(evid, 'endpoint', str(r_elems['endpoint'])))
-                            if (isinstance(r_elems['endpoint'], str)):
-                                logger.info(LOG_FORMAT.format(evid, 'endpoint', str(r_elems['endpoint'])))
-                                r_elems['endpoint'] = {'address': r_elems['endpoint']}
+                        else:
 
-                        if ("dBSubnetGroup" in r_elems):
-                            logger.debug(LOG_FORMAT.format(evid, "dBSubnetGroup", str(r_elems['dBSubnetGroup'])))
-                            if (isinstance(r_elems['dBSubnetGroup'], str)):
-                                logger.info(LOG_FORMAT.format(evid, "dBSubnetGroup", str(r_elems['dBSubnetGroup'])))
-                                r_elems['dBSubnetGroup'] = {'dBSubnetGroupName': r_elems['dBSubnetGroup']}
+                            # Not sure, to be verified
+                            if("role" in r_elems):
+                                logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, "responseElements.role", str(r_elems["role"]), ev))
+                                if (isinstance(r_elems["role"], str)):
+                                    logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "responseElements.role", str(r_elems["role"]), ev))
+                                    arn = r_elems["role"]
+                                    del r_elems['role']
+                                    r_elems['roleArn'] = arn
+
+
+                            if ("endpoint" in r_elems):
+                                logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, 'responseElements.endpoint', str(r_elems['endpoint']), ev))
+                                if (isinstance(r_elems['endpoint'], str)):
+                                    logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, 'responseElements.endpoint', str(r_elems['endpoint']), ev))
+                                    r_elems['endpoint'] = {'address': r_elems['endpoint']}
+
+
+                            # Not sure, to be verified
+                            if ("dBSubnetGroup" in r_elems):
+                                logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, "responseElements.dBSubnetGroup", str(r_elems['dBSubnetGroup']), ev))
+                                if (isinstance(r_elems['dBSubnetGroup'], str)):
+                                    logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, "responseElements.dBSubnetGroup", str(r_elems['dBSubnetGroup']), ev))
+                                    r_elems['dBSubnetGroup'] = {'dBSubnetGroupName': r_elems['dBSubnetGroup']}
 
                 # Some other exceptions
 
                 if ("apiVersion" in cloud_trail_event):
 
                     content = cloud_trail_event['apiVersion']
-                    logger.debug(LOG_FORMAT.format(evid, 'apiVersion', content))
-                    ind = "apiVersion." + svc
+                    logger.debug(LOG_FORMAT.format(ev_id, svc, ev_name, 'apiVersion', content, ev))
+                    ind = "apiVersion_" + svc
                     cloud_trail_event[ind] = content
                     del cloud_trail_event['apiVersion']
 
                 if ("additionalEventData" in cloud_trail_event):
 
                     content = cloud_trail_event['additionalEventData']
-                    logger.info(LOG_FORMAT.format(evid, 'additionalEventData', content))
-                    ind = "additionalEventData." + svc
+                    logger.info(LOG_FORMAT.format(ev_id, svc, ev_name, 'additionalEventData', content, ev))
+                    ind = "additionalEventData_" + svc
                     cloud_trail_event[ind] = content
                     del cloud_trail_event['additionalEventData'] 
 
-                # Let's rock: we parse all the JSON fields
-                for det,val in cloud_trail_event.items():
+                # 
+                # --- Let's rock: we parse all the JSON fields
+                #
 
-                    event[det] = val
+                # It may happens sometimes that the trail event is empty!
+                
+                if (cloud_trail_event != None):
+
+                    for det,val in cloud_trail_event.items():
+
+                        event[det] = val
                     
                 # Now we have an updated event, we can put it in elasticsearch
                 # Let's suppose we won't need to update them for they should be sealed in stone!
-                if (es.exists(index=INDEX_NAME, doc_type=DOC_TYPE, id=evid)):
+                if (es.exists(index=INDEX_NAME, doc_type=DOC_TYPE, id=ev_id)):
                     nb_nop += 1
                 else:                
                     nb_created +=1
-                    es.index(index=INDEX_NAME, doc_type=DOC_TYPE, id=evid, body=event)
+                    es.index(index=INDEX_NAME, doc_type=DOC_TYPE, id=ev_id, body=event)
 
         # Here everything is fine, we read all records without any mapping error
         reg = regions[current_region]
@@ -413,11 +430,13 @@ def load_cloudtrail_records(current_region, search_type, start_time = "", end_ti
     except Exception as e:
 
         print("!!! Exception !!!")
-        print(evid)
+        print(ev_id)
         pprint.pprint(event)
         logger.critical("Abnormal ending of loading CloudTrail events, probably due to a parsing error.")
         logger.critical("Exception detail: " + str(e))
         logger.critical(str(event))
+
+        raise e
 
     finally:
 
@@ -462,7 +481,7 @@ nb_arg = len(arguments)
 logger          = logging.getLogger("aws-cloudtrail")
 hdlr            = logging.FileHandler("trail.log")
 formatter       = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-LOG_FORMAT      = "{} {} {}"
+LOG_FORMAT      = "ev_id:{} svc:{} ev.name:{} field:{} new.field:{} orig.evt:{} "
 
 # --- Log handler
 
