@@ -53,9 +53,6 @@ url        = url of the Elasticsearch endpoint
 ```
 
 ## Known problems in mapping
-* CreateQueue sqs.amazonaws.com --> requestParameters.attribute
-* DescribeEvents health.amazonaws.com --> requestParameters.filter
-* SetDataRetrievalPolicy glacier.amazonaws.com --> PolicyUnkownType!!
 
 Here are some examples I've found. This is **NOT** an exhaustive list.
 
