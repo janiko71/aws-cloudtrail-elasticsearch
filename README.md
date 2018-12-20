@@ -54,4 +54,4 @@ url        = url of the Elasticsearch endpoint
 
 ## Known problems in mapping
 
-Here are some examples I've found are listed [here](https://github.com/janiko71/aws-cloudtrail-elasticsearch/blob/master/mapping_examples.ds). This is **NOT** an exhaustive list.
+Here are some examples I've found are listed [here](https://github.com/janiko71/aws-cloudtrail-elasticsearch/blob/master/mapping_examples.md). This is **NOT** an exhaustive list.
